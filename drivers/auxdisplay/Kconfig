@@ -1,0 +1,10 @@
+
+menu "Auxiliary (textual) Display Drivers"
+
+if AUXDISPLAY
+
+rsource "Kconfig.ssd1311"
+
+endif
+
+endmenu

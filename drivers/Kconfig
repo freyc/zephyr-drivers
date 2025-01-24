@@ -1,12 +1,5 @@
-menu "Drivers"
+menu "Device Drivers"
 
-if AUXDISPLAY
-
-config AUXDISPLAY_SSD1311
-    bool "Enable the display-driver for ssd1311 based displays"
-    default n
-    depends on I2C
-
-endif
+rsource "auxdisplay/Kconfig"
 
 endmenu

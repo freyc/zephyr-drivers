@@ -1,2 +1,2 @@
 
-add_subdirectory(auxdisplay)
+add_subdirectory_ifdef(CONFIG_AUXDISPLAY auxdisplay)

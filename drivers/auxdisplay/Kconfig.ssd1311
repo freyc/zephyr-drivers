@@ -1,0 +1,7 @@
+
+config AUXDISPLAY_SSD1311
+    bool "SSD1311 display driver"
+    default n
+    depends on I2C || SPI
+    help
+        Enable driver for SSD1311 display driver.
