@@ -3,6 +3,7 @@
 
 #include <zephyr/drivers/auxdisplay.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -11,9 +12,11 @@ LOG_MODULE_REGISTER(ssd1311, CONFIG_AUXDISPLAY_LOG_LEVEL);
 
 struct ssd1311_config {
     struct i2c_dt_spec bus;
+    struct gpio_dt_spec reset;
     int lines;
     int font_width;
     bool invert_cursor;
+    int phys_rows;
 };
 
 struct ssd1311_data {
@@ -61,6 +64,20 @@ static int ssd1311_display_off(const struct device* dev) {
     return ssd1311_display_ctrl(dev);
 }
 
+static int ssd1311_cursor_set_enabled(const struct device* dev, bool enabled) {
+    struct ssd1311_data *data = dev->data;
+
+    data->cursor_on = enabled ? 1u : 0u;
+    return ssd1311_display_ctrl(dev);
+}
+
+static int ssd1311_position_blinking_set_enabled(const struct device* dev, bool enabled) {
+    struct ssd1311_data *data = dev->data;
+
+    data->blink_on = enabled ? 1u : 0u;
+    return ssd1311_display_ctrl(dev);
+}
+
 
 static int ssd1311_clear(const struct device* dev) {
     return ssd1311_send_cmd(dev, 0x01);
@@ -82,11 +99,13 @@ static int ssd1311_brightness_set(const struct device* dev, uint8_t brightness) 
 
 static int ssd1311_write(const struct device* dev, const uint8_t* data, uint16_t len) {
     struct i2c_msg msgs[2];
-    uint8_t msg = 0xc0;
+    
+    uint8_t msg[] = {0x40};
     msgs[0].flags = I2C_MSG_WRITE;
-    msgs[0].buf = &msg;
-    msgs[0].len = 1;
-    msgs[1].flags = I2C_MSG_WRITE;
+    msgs[0].buf = msg;
+    msgs[0].len = sizeof(msg);
+
+    msgs[1].flags = I2C_MSG_WRITE | I2C_MSG_STOP;
     msgs[1].buf = (uint8_t*)data;
     msgs[1].len = len;
 
@@ -101,6 +120,24 @@ static int ssd1311_custom_command(const struct device *dev, struct auxdisplay_cu
 
 static int ssd1311_init(const struct device* dev) {
     const struct ssd1311_config* config = dev->config;
+    int rc;
+
+    if (!device_is_ready(config->bus.bus)) {
+		return -ENODEV;
+	}
+
+    if(config->reset.port) {
+        rc = gpio_pin_configure_dt(&config->reset, GPIO_OUTPUT | GPIO_OUTPUT_INIT_LOW);
+        
+        if(rc < 0) {
+            LOG_ERR("could not initialise reset-gpio");
+            return rc;
+        }
+
+        k_msleep(10);
+
+        rc = gpio_pin_set_dt(&config->reset, 1);
+    }
 
     //https://github.com/iggymayer/SSD1311/blob/main/src/SSD1311.cpp
     //https://github.com/jafrado/2004_i2c_oled/blob/master/ssd13xx_20x4_oled.c
@@ -112,9 +149,20 @@ static int ssd1311_init(const struct device* dev) {
     // extended function set
     ssd1311_send_cmd(dev, 0x22 | ((config->lines == 2 || config->lines == 4) ? 0x08 : 0x00) /*0x2a*/);
 
+    /*
+        NW  N
+        0   0   1 line
+        0   1   2 lines
+        1   0   3 lines
+        1   1   4 lines
+
+    
+    */
+
     uint8_t cmd = 0x08;
 
-    if(config->lines == 3 || config->lines == 4) {
+    if(config->phys_rows == 3 || config->phys_rows == 4) 
+    {
         cmd |= 0x01;
     }
 
@@ -135,15 +183,21 @@ static int ssd1311_init(const struct device* dev) {
     cmd = 0x18; // 2-2
     cmd = 0x1C; // 2-1-1
 */
-    ssd1311_send_cmd(dev, 0x28);
-    return -ENOTSUP;
+    //cmd = 0x18; // 2-2
+    //ssd1311_send_cmd(dev, cmd);
+
+    //ssd1311_send_cmd(dev, 0x28); 
+    //0x04 -> DH (double height)
+    ssd1311_send_cmd(dev, /*0x04 |*/ 0x20 | ((config->lines == 2 || config->lines == 4) ? 0x08 : 0x00) /*0x2a*/);
+    ssd1311_clear(dev);
+    return 0;
 }
 
 static DEVICE_API(auxdisplay, ssd1311_api) = {
     .display_on = ssd1311_display_on,
     .display_off = ssd1311_display_off,
-    .cursor_set_enabled = NULL,
-    .position_blinking_set_enabled = NULL,
+    .cursor_set_enabled = ssd1311_cursor_set_enabled,
+    .position_blinking_set_enabled = ssd1311_position_blinking_set_enabled,
     .cursor_shift_set = NULL,
     .cursor_position_set = NULL,
     .cursor_position_get = NULL,
@@ -164,9 +218,11 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
 #define SSD1311_INIT(inst)          \
     static const struct ssd1311_config ssd1311_config_##inst = {    \
         .bus = I2C_DT_SPEC_INST_GET(inst),                          \
+        .reset = GPIO_DT_SPEC_INST_GET_OR(inst, reset_gpios, {0}),  \
         .lines = DT_INST_PROP(inst, rows),                          \
         .font_width = DT_INST_PROP(inst, font_width),               \
         .invert_cursor = DT_INST_PROP(inst, invert_cursor),         \
+        .phys_rows = DT_INST_PROP(inst, phys_rows),                 \
     };                                                              \
     static struct ssd1311_data ssd1311_data_##inst = {0u};          \
                                                                     \

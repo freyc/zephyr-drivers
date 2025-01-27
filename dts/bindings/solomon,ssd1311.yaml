@@ -16,3 +16,13 @@ properties:
   invert-cursor:
     type: boolean
     required: false
+
+  reset-gpios:
+    type: phandle-array
+    required: false
+    description: Reset pin
+
+  phys-rows:
+    type: int
+    required: false
+    default: 4
