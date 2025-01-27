@@ -28,6 +28,12 @@ static int ssd1311_send_cmd(const struct device* dev, uint8_t cmd) {
     return i2c_write_dt(&config->bus, cmd_buf, sizeof(cmd_buf));
 }
 
+static int ssd1311_send_data(const struct device* dev, uint8_t data) {
+    const struct ssd1311_config* config = dev->config;
+    uint8_t cmd_buf[2] = {0x40, data};
+    return i2c_write_dt(&config->bus, cmd_buf, sizeof(cmd_buf));
+}
+
 static int ssd1311_display_ctrl(const struct device* dev) {
     struct ssd1311_data* data = dev->data;
 #if 0
@@ -55,22 +61,42 @@ static int ssd1311_display_off(const struct device* dev) {
     return ssd1311_display_ctrl(dev);
 }
 
-static int ssd1311_custom_command(const struct device *dev, struct auxdisplay_custom_data *command) {
-    const struct ssd1311_config* config = dev->config;
-    return i2c_write_dt(&config->bus, command->data, command->len);
+
+static int ssd1311_clear(const struct device* dev) {
+    return ssd1311_send_cmd(dev, 0x01);
 }
 
 static int ssd1311_brightness_set(const struct device* dev, uint8_t brightness) {
-    const struct ssd1311_config* config = dev->config;
 
-    //uint8_t cmd = 0x2a;
+    int rc = 0;
     ssd1311_send_cmd(dev, 0x2a);
     ssd1311_send_cmd(dev, 0x79);
     ssd1311_send_cmd(dev, 0x81);
     ssd1311_send_cmd(dev, brightness);
 
     ssd1311_send_cmd(dev, 0x78);
-    ssd1311_send_cmd(dev, 0x28);
+    rc = ssd1311_send_cmd(dev, 0x28);
+
+    return rc;
+}
+
+static int ssd1311_write(const struct device* dev, const uint8_t* data, uint16_t len) {
+    struct i2c_msg msgs[2];
+    uint8_t msg = 0xc0;
+    msgs[0].flags = I2C_MSG_WRITE;
+    msgs[0].buf = &msg;
+    msgs[0].len = 1;
+    msgs[1].flags = I2C_MSG_WRITE;
+    msgs[1].buf = (uint8_t*)data;
+    msgs[1].len = len;
+
+    const struct ssd1311_config* config = dev->config;
+    return i2c_transfer_dt(&config->bus, msgs, 2);
+}
+
+static int ssd1311_custom_command(const struct device *dev, struct auxdisplay_custom_data *command) {
+    const struct ssd1311_config* config = dev->config;
+    return i2c_write_dt(&config->bus, command->data, command->len);
 }
 
 static int ssd1311_init(const struct device* dev) {
@@ -116,9 +142,23 @@ static int ssd1311_init(const struct device* dev) {
 static DEVICE_API(auxdisplay, ssd1311_api) = {
     .display_on = ssd1311_display_on,
     .display_off = ssd1311_display_off,
+    .cursor_set_enabled = NULL,
+    .position_blinking_set_enabled = NULL,
+    .cursor_shift_set = NULL,
+    .cursor_position_set = NULL,
+    .cursor_position_get = NULL,
+    .display_position_set = NULL,
+    .display_position_get = NULL,
+    .capabilities_get = NULL,
+    .clear = ssd1311_clear,
     .brightness_get = NULL,
     .brightness_set = ssd1311_brightness_set,
-    .custom_command = ssd1311_custom_command,
+    .backlight_get = NULL,
+    .backlight_set = NULL,
+    .is_busy = NULL,
+    .custom_character_set = NULL,
+    .write = ssd1311_write,
+    .custom_command = ssd1311_custom_command
 };
 
 #define SSD1311_INIT(inst)          \
