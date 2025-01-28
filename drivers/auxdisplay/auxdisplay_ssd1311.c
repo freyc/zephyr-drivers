@@ -78,6 +78,27 @@ static int ssd1311_position_blinking_set_enabled(const struct device* dev, bool 
     return ssd1311_display_ctrl(dev);
 }
 
+static int ssd1311_cursor_position_set(const struct device* dev, enum auxdisplay_position type,
+							int16_t x, int16_t y) {
+    
+    const struct ssd1311_config *config = dev->config;
+
+    if(type != AUXDISPLAY_POSITION_ABSOLUTE) {
+        return -ENOTSUP;
+    }
+
+    if(x >= 20 || y >= 4) {
+        return -EINVAL;
+    }
+
+    uint8_t pos_cmd[] = {0x80, 0x80};
+
+    pos_cmd[1] += (y * 0x20 + x);
+    int rc = i2c_write_dt(&config->bus, pos_cmd, sizeof(pos_cmd));
+
+    return rc;
+}
+
 
 static int ssd1311_clear(const struct device* dev) {
     return ssd1311_send_cmd(dev, 0x01);
@@ -199,7 +220,7 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
     .cursor_set_enabled = ssd1311_cursor_set_enabled,
     .position_blinking_set_enabled = ssd1311_position_blinking_set_enabled,
     .cursor_shift_set = NULL,
-    .cursor_position_set = NULL,
+    .cursor_position_set = ssd1311_cursor_position_set,
     .cursor_position_get = NULL,
     .display_position_set = NULL,
     .display_position_get = NULL,
