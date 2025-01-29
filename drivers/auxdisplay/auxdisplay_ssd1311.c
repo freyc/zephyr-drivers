@@ -13,10 +13,9 @@ LOG_MODULE_REGISTER(ssd1311, CONFIG_AUXDISPLAY_LOG_LEVEL);
 struct ssd1311_config {
     struct i2c_dt_spec bus;
     struct gpio_dt_spec reset;
-    int lines;
+    struct auxdisplay_capabilities capabilities;
     int font_width;
     bool invert_cursor;
-    int phys_rows;
 };
 
 struct ssd1311_data {
@@ -76,7 +75,12 @@ static int ssd1311_position_blinking_set_enabled(const struct device* dev, bool 
     struct ssd1311_data *data = dev->data;
 
     data->blink_on = enabled ? 1u : 0u;
-    return ssd1311_display_ctrl(dev);
+
+static int ssd1311_cursor_shift_set(const struct device* dev, uint8_t direction, bool display) {
+    //const struct ssd1311_config* config = dev->config;
+
+    uint8_t cmd = 0x10 | (direction == AUXDISPLAY_DIRECTION_RIGHT ? 0x04 : 0x00) | (display ? 0x08 : 0x00);
+    return ssd1311_send_cmd(dev, cmd);
 }
 
 static int ssd1311_cursor_position_set(const struct device* dev, enum auxdisplay_position type,
@@ -100,9 +104,20 @@ static int ssd1311_cursor_position_set(const struct device* dev, enum auxdisplay
     return rc;
 }
 
+static int ssd1311_capabilities_get(const struct device* dev, struct auxdisplay_capabilities* caps) {
+    const struct ssd1311_config* config = dev->config;
+    memcpy(caps, &config->capabilities, sizeof(struct auxdisplay_capabilities));
+    return 0;
+}
 
 static int ssd1311_clear(const struct device* dev) {
     return ssd1311_send_cmd(dev, 0x01);
+}
+
+static int ssd1311_brightness_get(const struct device* dev, uint8_t* brightness) {
+    struct ssd1311_data* data = dev->data;
+    *brightness = data->contrast;
+    return 0;
 }
 
 static int ssd1311_brightness_set(const struct device* dev, uint8_t brightness) {
@@ -148,6 +163,11 @@ static int ssd1311_init(const struct device* dev) {
     const struct ssd1311_config* config = dev->config;
     const struct ssd1311_data* data = dev->data;
     int rc;
+
+    if(config->capabilities.rows > 4 || config->capabilities.rows < 1) {
+        LOG_ERR("invalid number of rows (%d); must be 1...4", config->capabilities.rows);
+        return -EINVAL;
+    }
 
     if (!device_is_ready(config->bus.bus)) {
         LOG_ERR("i2c-bus not ready");
@@ -231,14 +251,14 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
     .display_off = ssd1311_display_off,
     .cursor_set_enabled = ssd1311_cursor_set_enabled,
     .position_blinking_set_enabled = ssd1311_position_blinking_set_enabled,
-    .cursor_shift_set = NULL,
+    .cursor_shift_set = ssd1311_cursor_shift_set,
     .cursor_position_set = ssd1311_cursor_position_set,
     .cursor_position_get = NULL,
     .display_position_set = NULL,
     .display_position_get = NULL,
-    .capabilities_get = NULL,
+    .capabilities_get = ssd1311_capabilities_get,
     .clear = ssd1311_clear,
-    .brightness_get = NULL,
+    .brightness_get = ssd1311_brightness_get,
     .brightness_set = ssd1311_brightness_set,
     .backlight_get = NULL,
     .backlight_set = NULL,
@@ -252,10 +272,19 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
     static const struct ssd1311_config ssd1311_config_##inst = {    \
         .bus = I2C_DT_SPEC_INST_GET(inst),                          \
         .reset = GPIO_DT_SPEC_INST_GET_OR(inst, reset_gpios, {0}),  \
-        .lines = DT_INST_PROP(inst, rows),                          \
+        .capabilities =                                                                    \
+			{                                                                          \
+				.columns = DT_INST_PROP(inst, columns),                \
+				.rows = DT_INST_PROP(inst, rows),                      \
+				.mode = 0,                                          \
+				.brightness.minimum = 0,        \
+				.brightness.maximum = 255,        \
+				.backlight.minimum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,\
+				.backlight.maximum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,\
+				.custom_characters = 0,                             \
+			},                                                      \
         .font_width = DT_INST_PROP(inst, font_width),               \
         .invert_cursor = DT_INST_PROP(inst, invert_cursor),         \
-        .phys_rows = DT_INST_PROP(inst, phys_rows),                 \
     };                                                              \
     static struct ssd1311_data ssd1311_data_##inst = {              \
         .display_on = 0u,                                           \
