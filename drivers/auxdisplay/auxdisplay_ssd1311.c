@@ -23,6 +23,7 @@ struct ssd1311_data {
     uint32_t display_on : 1;
     uint32_t cursor_on : 1;
     uint32_t blink_on : 1;
+    uint8_t contrast;
 };
 
 static int ssd1311_send_cmd(const struct device* dev, uint8_t cmd) {
@@ -106,7 +107,11 @@ static int ssd1311_clear(const struct device* dev) {
 
 static int ssd1311_brightness_set(const struct device* dev, uint8_t brightness) {
 
+    struct ssd1311_data* data = dev->data;
     int rc = 0;
+
+    data->contrast = brightness;
+    
     ssd1311_send_cmd(dev, 0x2a);
     ssd1311_send_cmd(dev, 0x79);
     ssd1311_send_cmd(dev, 0x81);
@@ -141,9 +146,11 @@ static int ssd1311_custom_command(const struct device *dev, struct auxdisplay_cu
 
 static int ssd1311_init(const struct device* dev) {
     const struct ssd1311_config* config = dev->config;
+    const struct ssd1311_data* data = dev->data;
     int rc;
 
     if (!device_is_ready(config->bus.bus)) {
+        LOG_ERR("i2c-bus not ready");
 		return -ENODEV;
 	}
 
@@ -155,10 +162,13 @@ static int ssd1311_init(const struct device* dev) {
             return rc;
         }
 
-        k_msleep(10);
-
+        k_msleep(1);
+    
         rc = gpio_pin_set_dt(&config->reset, 1);
     }
+
+#if 0
+    // untested code!!
 
     //https://github.com/iggymayer/SSD1311/blob/main/src/SSD1311.cpp
     //https://github.com/jafrado/2004_i2c_oled/blob/master/ssd13xx_20x4_oled.c
@@ -176,13 +186,11 @@ static int ssd1311_init(const struct device* dev) {
         0   1   2 lines
         1   0   3 lines
         1   1   4 lines
-
-    
     */
 
     uint8_t cmd = 0x08;
 
-    if(config->phys_rows == 3 || config->phys_rows == 4) 
+    if(config->phys_rows == 3 || config->phys_rows == 4)
     {
         cmd |= 0x01;
     }
@@ -209,8 +217,12 @@ static int ssd1311_init(const struct device* dev) {
 
     //ssd1311_send_cmd(dev, 0x28); 
     //0x04 -> DH (double height)
-    ssd1311_send_cmd(dev, /*0x04 |*/ 0x20 | ((config->lines == 2 || config->lines == 4) ? 0x08 : 0x00) /*0x2a*/);
+    ssd1311_send_cmd(dev, /*0x04 |*/ 0x20 | ((config->lines == 2 || config->lines == 4) ? 0x08 : 0x00));
+#endif
+
     ssd1311_clear(dev);
+
+    ssd1311_brightness_set(dev, data->contrast);
     return 0;
 }
 
@@ -245,7 +257,12 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
         .invert_cursor = DT_INST_PROP(inst, invert_cursor),         \
         .phys_rows = DT_INST_PROP(inst, phys_rows),                 \
     };                                                              \
-    static struct ssd1311_data ssd1311_data_##inst = {0u};          \
+    static struct ssd1311_data ssd1311_data_##inst = {              \
+        .display_on = 0u,                                           \
+        .cursor_on = 0u,                                            \
+        .blink_on = 0u,                                             \
+        .contrast = DT_INST_PROP(inst, contrast),                   \
+    };                                                              \
                                                                     \
     DEVICE_DT_DEFINE(                                               \
         DT_DRV_INST(inst),                                          \

@@ -26,3 +26,8 @@ properties:
     type: int
     required: false
     default: 4
+
+  contrast:
+    type: int
+    required: false
+    default: 255
