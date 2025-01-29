@@ -23,6 +23,7 @@ struct ssd1311_data {
     uint32_t cursor_on : 1;
     uint32_t blink_on : 1;
     uint8_t contrast;
+    struct k_mutex lock;
 };
 
 static int ssd1311_send_cmd(const struct device* dev, uint8_t cmd) {
@@ -54,27 +55,47 @@ static int ssd1311_display_ctrl(const struct device* dev) {
 
 static int ssd1311_display_on(const struct device* dev) {
     struct ssd1311_data* data = dev->data;
+    
+    k_mutex_lock(&data->lock, K_FOREVER);
     data->display_on = 1u;
-    return ssd1311_display_ctrl(dev);
+    int rc = ssd1311_display_ctrl(dev);
+    k_mutex_unlock(&data->lock);
+
+    return rc;
 }
 
 static int ssd1311_display_off(const struct device* dev) {
     struct ssd1311_data* data = dev->data;
+
+    k_mutex_lock(&data->lock, K_FOREVER);
     data->display_on = 0u;
-    return ssd1311_display_ctrl(dev);
+    int rc = ssd1311_display_ctrl(dev);
+    k_mutex_unlock(&data->lock);
+
+    return rc;
 }
 
 static int ssd1311_cursor_set_enabled(const struct device* dev, bool enabled) {
     struct ssd1311_data *data = dev->data;
 
+    k_mutex_lock(&data->lock, K_FOREVER);
     data->cursor_on = enabled ? 1u : 0u;
-    return ssd1311_display_ctrl(dev);
+    int rc = ssd1311_display_ctrl(dev);
+    k_mutex_unlock(&data->lock);
+
+    return rc;
 }
 
 static int ssd1311_position_blinking_set_enabled(const struct device* dev, bool enabled) {
     struct ssd1311_data *data = dev->data;
-
+    
+    k_mutex_lock(&data->lock, K_FOREVER);
     data->blink_on = enabled ? 1u : 0u;
+    int rc = ssd1311_display_ctrl(dev);
+    k_mutex_unlock(&data->lock);
+
+    return rc;
+}
 
 static int ssd1311_cursor_shift_set(const struct device* dev, uint8_t direction, bool display) {
     //const struct ssd1311_config* config = dev->config;
@@ -87,6 +108,7 @@ static int ssd1311_cursor_position_set(const struct device* dev, enum auxdisplay
 							int16_t x, int16_t y) {
     
     const struct ssd1311_config *config = dev->config;
+    struct ssd1311_data* data = dev->data;
 
     if(type != AUXDISPLAY_POSITION_ABSOLUTE) {
         return -ENOTSUP;
@@ -98,8 +120,10 @@ static int ssd1311_cursor_position_set(const struct device* dev, enum auxdisplay
 
     uint8_t pos_cmd[] = {0x80, 0x80};
 
+    k_mutex_lock(&data->lock, K_FOREVER);
     pos_cmd[1] += (y * 0x20 + x);
     int rc = i2c_write_dt(&config->bus, pos_cmd, sizeof(pos_cmd));
+    k_mutex_unlock(&data->lock);
 
     return rc;
 }
@@ -125,6 +149,8 @@ static int ssd1311_brightness_set(const struct device* dev, uint8_t brightness) 
     struct ssd1311_data* data = dev->data;
     int rc = 0;
 
+    k_mutex_lock(&data->lock, K_FOREVER);
+
     data->contrast = brightness;
     
     ssd1311_send_cmd(dev, 0x2a);
@@ -134,6 +160,8 @@ static int ssd1311_brightness_set(const struct device* dev, uint8_t brightness) 
 
     ssd1311_send_cmd(dev, 0x78);
     rc = ssd1311_send_cmd(dev, 0x28);
+
+    k_mutex_unlock(&data->lock);
 
     return rc;
 }
@@ -208,6 +236,15 @@ static int ssd1311_init(const struct device* dev) {
 #if 0
     // untested code!!
 
+    /*
+        display_mode:
+        0x00 -> 1-1-1-1 (all lines normal height)
+        0x01 -> 2-2
+        0x02 -> 1-1-2
+        0x03 -> 1-2-1
+        0x04 -> 2-1-1
+    */
+
     //https://github.com/iggymayer/SSD1311/blob/main/src/SSD1311.cpp
     //https://github.com/jafrado/2004_i2c_oled/blob/master/ssd13xx_20x4_oled.c
     // send 0x2a -> set RE bit
@@ -256,6 +293,12 @@ static int ssd1311_init(const struct device* dev) {
     //ssd1311_send_cmd(dev, 0x28); 
     //0x04 -> DH (double height)
     ssd1311_send_cmd(dev, /*0x04 |*/ 0x20 | ((config->lines == 2 || config->lines == 4) ? 0x08 : 0x00));
+#else
+    // extended function set
+    ssd1311_send_cmd(dev, 0x2a);
+    ssd1311_send_cmd(dev, 0x72);
+    ssd1311_send_data(dev, 0x00); // cgrom a, cgram 8
+    ssd1311_send_cmd(dev, 0x28);
 #endif
 
     ssd1311_clear(dev);
@@ -290,18 +333,18 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
     static const struct ssd1311_config ssd1311_config_##inst = {    \
         .bus = I2C_DT_SPEC_INST_GET(inst),                          \
         .reset = GPIO_DT_SPEC_INST_GET_OR(inst, reset_gpios, {0}),  \
-        .capabilities =                                                                    \
-			{                                                                          \
-				.columns = DT_INST_PROP(inst, columns),                \
-				.rows = DT_INST_PROP(inst, rows),                      \
+        .capabilities =                                             \
+			{                                                       \
+				.columns = DT_INST_PROP(inst, columns),             \
+				.rows = DT_INST_PROP(inst, rows),                   \
 				.mode = 0,                                          \
-				.brightness.minimum = 0,        \
-				.brightness.maximum = 255,        \
+				.brightness.minimum = 0,                            \
+				.brightness.maximum = 255,                          \
 				.backlight.minimum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,\
 				.backlight.maximum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,\
 				.custom_characters = 8,                             \
-                .custom_character_width = 5u, \
-                .custom_character_height = 8u, \
+                .custom_character_width = 5u,                       \
+                .custom_character_height = 8u,                      \
 			},                                                      \
         .font_width = DT_INST_PROP(inst, font_width),               \
         .invert_cursor = DT_INST_PROP(inst, invert_cursor),         \
@@ -311,6 +354,7 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
         .cursor_on = 0u,                                            \
         .blink_on = 0u,                                             \
         .contrast = DT_INST_PROP(inst, contrast),                   \
+        .lock = Z_MUTEX_INITIALIZER(ssd1311_data_##inst.lock),      \
     };                                                              \
                                                                     \
     DEVICE_DT_DEFINE(                                               \
