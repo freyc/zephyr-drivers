@@ -138,6 +138,24 @@ static int ssd1311_brightness_set(const struct device* dev, uint8_t brightness) 
     return rc;
 }
 
+static int ssd1311_custom_character_set(const struct device* dev, struct auxdisplay_character *character) {
+    const struct ssd1311_config* config = dev->config;
+
+    if(character->index >= config->capabilities.custom_characters) {
+        return -EINVAL;
+    }
+
+    uint8_t cgram_addr = character->index << 3u;
+    ssd1311_send_cmd(dev, 0x40 | cgram_addr);
+
+    for(int i = 0; i < config->capabilities.custom_character_height; i++) {
+        ssd1311_send_data(dev, character->data[i] & 0x1f);
+    }
+
+    character->character_code = character->index;
+    return 0;
+}
+
 static int ssd1311_write(const struct device* dev, const uint8_t* data, uint16_t len) {
     struct i2c_msg msgs[2];
     
@@ -263,7 +281,7 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
     .backlight_get = NULL,
     .backlight_set = NULL,
     .is_busy = NULL,
-    .custom_character_set = NULL,
+    .custom_character_set = ssd1311_custom_character_set,
     .write = ssd1311_write,
     .custom_command = ssd1311_custom_command
 };
@@ -281,7 +299,9 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
 				.brightness.maximum = 255,        \
 				.backlight.minimum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,\
 				.backlight.maximum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,\
-				.custom_characters = 0,                             \
+				.custom_characters = 8,                             \
+                .custom_character_width = 5u, \
+                .custom_character_height = 8u, \
 			},                                                      \
         .font_width = DT_INST_PROP(inst, font_width),               \
         .invert_cursor = DT_INST_PROP(inst, invert_cursor),         \
