@@ -1,0 +1,10 @@
+
+menu "Input Drivers"
+
+if INPUT
+
+rsource "Kconfig.crtouch"
+
+endif
+
+endmenu

@@ -1,0 +1,39 @@
+description: CRTouch
+
+compatible: "nxp,crtouch"
+
+include: [i2c-device.yaml]
+
+
+properties:
+  int-gpios:
+    type: phandle-array
+    required: false
+    description: Reset pin
+    
+#  font-width:
+#    type: int
+#    required: false
+#    description: Font width
+#    enum:
+#      - 5
+#      - 6
+#
+#  invert-cursor:
+#    type: boolean
+#    required: false
+#
+#  reset-gpios:
+#    type: phandle-array
+#    required: false
+#    description: Reset pin
+#
+#  phys-rows:
+#    type: int
+#    required: false
+#    default: 4
+#
+#  contrast:
+#    type: int
+#    required: false
+#    default: 255

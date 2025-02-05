@@ -1,5 +1,5 @@
 menu "Device Drivers"
 
 rsource "auxdisplay/Kconfig"
-
+rsource "input/Kconfig"
 endmenu
