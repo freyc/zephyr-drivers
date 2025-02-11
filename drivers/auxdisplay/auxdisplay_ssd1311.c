@@ -75,6 +75,8 @@ static int ssd1311_position_blinking_set_enabled(const struct device* dev, bool 
     struct ssd1311_data *data = dev->data;
 
     data->blink_on = enabled ? 1u : 0u;
+    return ssd1311_display_ctrl(dev);
+}
 
 static int ssd1311_cursor_shift_set(const struct device* dev, uint8_t direction, bool display) {
     //const struct ssd1311_config* config = dev->config;
