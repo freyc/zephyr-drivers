@@ -1,0 +1,24 @@
+
+menuconfig INPUT_TSI
+    bool "NXP Touch-sense-input driver"
+    default y
+    depends on DT_HAS_NXP_TSI_KEYS_ENABLED
+    help
+        Enable driver for NXP TSI driver.
+
+#if INPUT_TSI
+#
+#config INPUT_CRTOUCH_PERIOD
+#	int "Sample period"
+#	depends on !INPUT_CRTOUCH_INTERRUPT
+#	default 10
+#	help
+#	  Sample period in milliseconds when in polling mode.
+#
+#config INPUT_CRTOUCH_INTERRUPT
+#	bool "Interrupt"
+#	default y if $(dt_compat_any_has_prop,$(DT_COMPAT_NXP_CRTOUCH),int-gpios)
+#	help
+#	  Enable interrupt support (requires GPIO).
+#
+#endif

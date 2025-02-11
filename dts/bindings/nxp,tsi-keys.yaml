@@ -1,0 +1,146 @@
+# Copyright (c) 2024 Chen Xingyu <hi@xingrz.me>
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Input driver for ADC attached resistor ladder buttons.
+
+  The driver itself does not calculate each possible combination of resistor
+  values. Instead, users are required to specify the voltage for each single
+  key press or for combinations of key presses.
+
+  Example:
+
+  #include <dt-bindings/input/input-event-codes.h>
+
+  / {
+          buttons {
+                  compatible = "adc-keys";
+                  io-channels = <&adc 2>;
+                  keyup-threshold-mv = <0>;
+
+                  key_0 {
+                          press-thresholds-mv = <1650>,  /* KEY0 */
+                                                <2536>;  /* KEY0 + KEY1 */
+                          zephyr,code = <INPUT_KEY_0>;
+                  };
+
+                  key_1 {
+                          press-thresholds-mv = <2300>,  /* KEY1 */
+                                                <2536>;  /* KEY0 + KEY1 */
+                          zephyr,code = <INPUT_KEY_1>;
+                  };
+          };
+  };
+
+compatible: "nxp,tsi-keys"
+
+include: base.yaml
+
+properties:
+#  io-channels:
+#    type: phandle-array
+#    required: true
+#    description: Phandle to an ADC channel.
+
+  interrupts:
+    required: true
+
+  scans-per-electrode:
+    type: int
+    default: 1
+    required: false
+
+  ref-charge-current-ua:
+    type: int
+    default: 2
+    enum:
+      - 2
+      - 4
+      - 6
+      - 8
+      - 10
+      - 12
+      - 14
+      - 16
+      - 18
+      - 20
+      - 22
+      - 24
+      - 26
+      - 28
+      - 30
+      - 32
+    description: |
+      Ref oscillator charge current.
+
+  ext-charge-current-ua:
+    type: int
+    default: 2
+    enum:
+      - 2
+      - 4
+      - 6
+      - 8
+      - 10
+      - 12
+      - 14
+      - 16
+      - 18
+      - 20
+      - 22
+      - 24
+      - 26
+      - 28
+      - 30
+      - 32
+    description: |
+      External oscillator charge current.
+
+  sample-period-ms:
+    type: int
+    default: 20
+    description: |
+       Sample period in milliseconds.
+       If not specified defaults to 20.
+
+child-binding:
+  description: TSI KEYS child node.
+  properties:
+    pin:
+      type: int
+      required: true
+      enum:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+      description: |
+        Pin-number where the electrode is connected.
+
+    low-power-scan-pin:
+      type: boolean
+      description: |
+        Whether this pin is the low-power-scan-pin
+
+    press-threshold:
+      type: int
+      required: true
+      description: |
+        Counter value to consider a key pressed.
+
+    zephyr,code:
+      type: int
+      required: true
+      description: Key code to emit.

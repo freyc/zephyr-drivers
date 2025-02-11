@@ -4,6 +4,7 @@ menu "Input Drivers"
 if INPUT
 
 rsource "Kconfig.crtouch"
+rsource "Kconfig.tsi"
 
 endif
 

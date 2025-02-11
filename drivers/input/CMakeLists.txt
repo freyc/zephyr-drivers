@@ -1,2 +1,3 @@
 zephyr_library_amend()
 zephyr_library_sources_ifdef(CONFIG_INPUT_CRTOUCH input_crtouch.c)
+zephyr_library_sources_ifdef(CONFIG_INPUT_TSI input_tsi.c)
