@@ -42,17 +42,34 @@ struct tsi_config {
     struct tsi_key_state* key_state;
     uint8_t key_count;
     uint8_t scans_per_electrode;
+    uint8_t prescaler;
     uint8_t ref_charge;
     uint8_t ext_charge;
     uint8_t clk_source;
 };
 
+struct tsi_data {
+    const struct device* dev;
+    struct k_work work;
+};
+
 #define DEV_BASE(dev) (((struct tsi_config *)(dev->config))->base)
+
+static void tsi_process(struct k_work* work) {
+    struct tsi_data* data = CONTAINER_OF(work, struct tsi_data, work);
+    const struct device* dev = data->dev;
+
+
+}
 
 static int tsi_keys_init(const struct device* dev) {
     
     TSI_Type* base = DEV_BASE(dev);
     const struct tsi_config* config = dev->config;
+    struct tsi_data* data = dev->data;
+
+    data->dev = dev;
+    k_work_init(&data->work, tsi_process);
 
     int error = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
 	if (error) {
@@ -89,7 +106,12 @@ static int tsi_keys_init(const struct device* dev) {
 
     base->PEN = pen_reg;
 
-    base->GENCS = (base->GENCS & ~TSI_GENCS_NSCN_MASK) | ((config->scans_per_electrode << TSI_GENCS_NSCN_SHIFT) & TSI_GENCS_NSCN_MASK);
+    uint32_t gencs = base->GENCS;
+    gencs &= ~(TSI_GENCS_NSCN_MASK | TSI_GENCS_PS_MASK);
+    gencs |= (config->scans_per_electrode << TSI_GENCS_NSCN_SHIFT) & TSI_GENCS_NSCN_MASK;
+    gencs |= (config->prescaler << TSI_GENCS_PS_SHIFT) & TSI_GENCS_PS_MASK;
+
+    base->GENCS = gencs; //(base->GENCS & ~TSI_GENCS_NSCN_MASK) | ((config->scans_per_electrode << TSI_GENCS_NSCN_SHIFT) & TSI_GENCS_NSCN_MASK);
 
     config->irq_config(dev);
 
@@ -101,6 +123,8 @@ static int tsi_keys_init(const struct device* dev) {
     return 0;
 }
 
+
+
 static void tsi_isr(const struct device *dev)
 {
     const struct tsi_config* config = dev->config;
@@ -110,7 +134,7 @@ static void tsi_isr(const struct device *dev)
     base->GENCS = gencs & ~(TSI_GENCS_SWTS_MASK);
 #if 1
     if(gencs & TSI_GENCS_EOSF_MASK) {
-        LOG_DBG("end-of-scan");
+        //LOG_DBG("end-of-scan");
 
         //TODO: this has to be done in a work-item
         for(int i = 0; i < config->key_count; i++) {
@@ -123,7 +147,7 @@ static void tsi_isr(const struct device *dev)
 
             if(new_pressed != config->key_state[i].state) {
                 config->key_state[i].state = new_pressed;
-                //input_report_key(dev, key_config->key_code, new_pressed, true, K_FOREVER);
+                input_report_key(dev, key_config->key_code, new_pressed, true, K_FOREVER);
             }
         }
 
@@ -178,16 +202,19 @@ static void tsi_isr(const struct device *dev)
         .key_state = tsi_key_state_##n,                                                             \
         .key_count = ARRAY_SIZE(tsi_keys_code_cfg_##n),                                             \
         .scans_per_electrode = DT_INST_PROP(n, scans_per_electrode),                                \
+        .prescaler = DT_INST_ENUM_IDX(n, prescaler),    \
         .ref_charge = DT_INST_PROP(n, ref_charge_current_ua),                                       \
         .ext_charge = DT_INST_PROP(n, ext_charge_current_ua),                                       \
         .clk_source = DT_INST_PROP(n, clk_source),                                                  \
     };                                                                                              \
+    \
+    static struct tsi_data tsi_data_##n; \
                                                                                                     \
     static void tsi_irq_config_fun_##n (const struct device* dev) {                                 \
         IRQ_CONNECT(DT_INST_IRQN(n), DT_INST_IRQ(n, priority), tsi_isr, DEVICE_DT_INST_GET(n), 0);  \
         irq_enable(DT_INST_IRQN(n));				                                                \
     }                                                                                               \
-    DEVICE_DT_INST_DEFINE(n, tsi_keys_init, NULL, NULL, &tsi_config_##n,                            \
+    DEVICE_DT_INST_DEFINE(n, tsi_keys_init, NULL, &tsi_data_##n, &tsi_config_##n,                   \
 			      POST_KERNEL, CONFIG_INPUT_INIT_PRIORITY, NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(TSI_KEYS_INST)
