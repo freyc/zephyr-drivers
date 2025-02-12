@@ -10,7 +10,12 @@ properties:
     type: phandle-array
     required: false
     description: Reset pin
-    
+
+  sample-rate:
+    type: int
+    required: false
+    default: 8
+
 #  font-width:
 #    type: int
 #    required: false

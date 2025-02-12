@@ -20,6 +20,7 @@ struct crtouch_config {
 	/** Interrupt GPIO information. */
 	struct gpio_dt_spec int_gpio;
 #endif
+    uint8_t sample_rate;
 };
 
 struct crtouch_data {
@@ -41,6 +42,7 @@ struct crtouch_data {
 #define REG_RT_STATUS_1 0x01
 #define REG_X_MSB       0x03
 #define REG_RT_TRIGGER  0x41
+#define REG_RT_SMPLR    0x43
 
 static int crtouch_process(const struct device* dev) {
     struct crtouch_data* data = dev->data;
@@ -127,6 +129,17 @@ static int crtouch_init(const struct device* dev) {
         rc = gpio_pin_set_dt(&config->reset, 1);
     }
 
+    if(config->sample_rate < 5 || config->sample_rate > 100) {
+        LOG_ERR("sample-rate outside valid range");
+        return -EINVAL;
+    }
+
+    rc = i2c_burst_write_dt(&config->bus, REG_RT_SMPLR, &config->sample_rate, 1u);
+    if(rc < 0) {
+        LOG_ERR("could not set sample-rate");
+        return rc;
+    }
+
 #ifdef CONFIG_INPUT_CRTOUCH_INTERRUPT
     if (!gpio_is_ready_dt(&config->int_gpio)) {
 		LOG_ERR("Interrupt GPIO controller device not ready");
@@ -169,6 +182,7 @@ static int crtouch_init(const struct device* dev) {
         .bus = I2C_DT_SPEC_INST_GET(inst),                          \
         .reset = GPIO_DT_SPEC_INST_GET_OR(inst, reset_gpios, {0}),  \
         .int_gpio = GPIO_DT_SPEC_INST_GET_OR(inst, int_gpios, {0}),  \
+        .sample_rate = DT_INST_PROP(inst, sample_rate),             \
     };                                                              \
     static struct crtouch_data crtouch_data_##inst = {              \
     };                                                              \
