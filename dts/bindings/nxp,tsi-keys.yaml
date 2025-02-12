@@ -34,7 +34,7 @@ description: |
 
 compatible: "nxp,tsi-keys"
 
-include: base.yaml
+include: ["base.yaml", "pinctrl-device.yaml"]
 
 properties:
 #  io-channels:
@@ -44,6 +44,17 @@ properties:
 
   interrupts:
     required: true
+
+  pinctrl-0:
+    required: true
+
+  clk_source:
+    type: int
+    default: 0
+    enum:
+      - 0
+      - 1
+      - 2
 
   scans-per-electrode:
     type: int
@@ -106,7 +117,7 @@ properties:
 child-binding:
   description: TSI KEYS child node.
   properties:
-    pin:
+    channel:
       type: int
       required: true
       enum:

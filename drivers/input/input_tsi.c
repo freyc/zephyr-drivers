@@ -3,7 +3,9 @@
 #include <errno.h>
 #include <soc.h>
 #include <zephyr/device.h>
-//#include <zephyr/drivers/pinctrl.h>
+#include <zephyr/drivers/clock_control.h>
+
+#include <zephyr/drivers/pinctrl.h>
 #include <zephyr/input/input.h>
 //#include <zephyr/input/input_kbd_matrix.h>
 #include <zephyr/irq.h>
@@ -32,6 +34,9 @@ struct tsi_key_state {
 
 struct tsi_config {
     TSI_Type* base;
+    const struct device *clock_dev;
+	clock_control_subsys_t clock_subsys;
+    const struct pinctrl_dev_config *pincfg;
     void(*irq_config)(const struct device*);
     const struct tsi_keys_code_config* key_config;
     struct tsi_key_state* key_state;
@@ -39,6 +44,7 @@ struct tsi_config {
     uint8_t scans_per_electrode;
     uint8_t ref_charge;
     uint8_t ext_charge;
+    uint8_t clk_source;
 };
 
 #define DEV_BASE(dev) (((struct tsi_config *)(dev->config))->base)
@@ -47,6 +53,14 @@ static int tsi_keys_init(const struct device* dev) {
     
     TSI_Type* base = DEV_BASE(dev);
     const struct tsi_config* config = dev->config;
+
+    int error = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
+	if (error) {
+        LOG_ERR("could not setup pinctrl");
+		return error;
+	}
+
+    clock_control_on(config->clock_dev, config->clock_subsys);
     
     uint32_t pen_reg = 0u;
     uint8_t lp_scan_pin = 0xff;
@@ -77,12 +91,12 @@ static int tsi_keys_init(const struct device* dev) {
 
     base->GENCS = (base->GENCS & ~TSI_GENCS_NSCN_MASK) | ((config->scans_per_electrode << TSI_GENCS_NSCN_SHIFT) & TSI_GENCS_NSCN_MASK);
 
-    base->GENCS |= TSI_GENCS_TSIEN_MASK;
-
     config->irq_config(dev);
 
     // enable end-of-scan-interrupt and periodical scan
     base->GENCS |= TSI_GENCS_TSIIE_MASK | TSI_GENCS_ESOR_MASK | TSI_GENCS_STM_MASK;
+
+    base->GENCS |= TSI_GENCS_TSIEN_MASK;
 
     return 0;
 }
@@ -94,7 +108,7 @@ static void tsi_isr(const struct device *dev)
 
     uint32_t gencs = base->GENCS;
     base->GENCS = gencs & ~(TSI_GENCS_SWTS_MASK);
-
+#if 1
     if(gencs & TSI_GENCS_EOSF_MASK) {
         LOG_DBG("end-of-scan");
 
@@ -109,7 +123,7 @@ static void tsi_isr(const struct device *dev)
 
             if(new_pressed != config->key_state[i].state) {
                 config->key_state[i].state = new_pressed;
-                input_report_key(dev, key_config->key_code, new_pressed, true, K_FOREVER);
+                //input_report_key(dev, key_config->key_code, new_pressed, true, K_FOREVER);
             }
         }
 
@@ -124,12 +138,14 @@ static void tsi_isr(const struct device *dev)
 #endif
 
     }
+#endif
+
 }
 
 #define TSI_KEYS_CODE_CFG(node_id)                              \
 	{                                                           \
         .key_code = DT_PROP(node_id, zephyr_code),              \
-        .pin = DT_PROP(node_id, pin),                           \
+        .pin = DT_PROP(node_id, channel),                       \
         .press = DT_PROP(node_id, press_threshold),             \
         .lp_scan_pin = DT_PROP(node_id, low_power_scan_pin),    \
     }
@@ -139,7 +155,11 @@ static void tsi_isr(const struct device *dev)
         .state = false,                                         \
     }
 
+#define TSI_DT_INST_CLOCK_SUBSYS(n)                                                       \
+	CLK_GATE_DEFINE(DT_INST_CLOCKS_CELL(n, offset), DT_INST_CLOCKS_CELL(n, bits))
+
 #define TSI_KEYS_INST(n)                                                                            \
+    PINCTRL_DT_INST_DEFINE(n);	\
 	static const struct tsi_keys_code_config tsi_keys_code_cfg_##n[] = {                            \
 		DT_INST_FOREACH_CHILD_STATUS_OKAY_SEP(n, TSI_KEYS_CODE_CFG, (,))};                          \
     static struct tsi_key_state tsi_key_state_##n[] = {                                             \
@@ -149,6 +169,10 @@ static void tsi_isr(const struct device *dev)
                                                                                                     \
     static const struct tsi_config tsi_config_##n = {                                               \
         .base = (TSI_Type*)DT_INST_REG_ADDR(n),                                                     \
+        .clock_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR(n)),	\
+        .clock_subsys = 					\
+		(clock_control_subsys_t)TSI_DT_INST_CLOCK_SUBSYS(n), \
+        .pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),		\
         .irq_config = tsi_irq_config_fun_##n,                                                       \
         .key_config = tsi_keys_code_cfg_##n,                                                        \
         .key_state = tsi_key_state_##n,                                                             \
@@ -156,6 +180,7 @@ static void tsi_isr(const struct device *dev)
         .scans_per_electrode = DT_INST_PROP(n, scans_per_electrode),                                \
         .ref_charge = DT_INST_PROP(n, ref_charge_current_ua),                                       \
         .ext_charge = DT_INST_PROP(n, ext_charge_current_ua),                                       \
+        .clk_source = DT_INST_PROP(n, clk_source),                                                  \
     };                                                                                              \
                                                                                                     \
     static void tsi_irq_config_fun_##n (const struct device* dev) {                                 \
@@ -180,4 +205,11 @@ static void tsi_irq_config_fun_0 (const struct device* dev) {
     { _Static_assert((0 || !(0 & (1UL << (0)))), "" "ZLI interrupt registered but feature is disabled"); 
     _Static_assert((((0 & (1UL << (0))) && ((1 == 1) || (2 < 1))) || (2 <= ((1UL << (4)) - ((1 + 0)) - 1))), "" "Invalid interrupt priority. Values must not exceed IRQ_PRIO_LOWEST"); 
     static __attribute__((__aligned__(__alignof(struct _isr_list)))) struct _isr_list __attribute__((section(".intList"))) __attribute__((__used__)) __isr_tsi_isr_irq_4 = {83, 0, (void *)&tsi_isr, (const void *)(&__device_dts_ord_30)}; z_arm_irq_priority_set(83, 2, 0); }; } static __attribute__((__aligned__(__alignof(struct device_state)))) struct device_state __devstate_dts_ord_30 __attribute__((__section__(".z_devstate"))); _Static_assert((sizeof("\"tsi0@40045000\"") <= 48U), "" "\"tsi0@40045000\"" " too long"); const __attribute__((__aligned__(__alignof(struct device)))) struct device __device_dts_ord_30 __attribute__((section("." "_device" "." "static" "." "3_90_"))) __attribute__((__used__)) = { .name = "tsi0@40045000", .config = (&tsi_config_0), .api = (((void *)0)), .state = (&__devstate_dts_ord_30), .data = (((void *)0)), }; static const __attribute__((__aligned__(__alignof(struct init_entry)))) struct init_entry __attribute__((__used__)) __attribute__((__section__( ".z_init_" "POST_KERNEL" "90""_" "00030""_"))) __init___device_dts_ord_30 = { .init_fn = {.dev = (tsi_keys_init)}, { .dev = &__device_dts_ord_30 }, }; ;
+
+
+static const struct tsi_keys_code_config tsi_keys_code_cfg_0[] = { { .key_code = 11, .pin = 0, .press = 100, .lp_scan_pin = 0, } , 
+{ .key_code = 2, .pin = 2, .press = 200, .lp_scan_pin = 0, }}; 
+static struct tsi_key_state tsi_key_state_0[] = { { .state = 0, } , { .state = 0, }}; 
+static void tsi_irq_config_fun_0 (const struct device* dev); 
+static const struct tsi_config tsi_config_0 = { .base = (TSI_Type*)1074024448U, .clock_dev = (&__device_dts_ord_9), .clock_subsys = (clock_control_subsys_t)0, .irq_config = tsi_irq_config_fun_0, .key_config = tsi_keys_code_cfg_0, .key_state = tsi_key_state_0, .key_count = ((size_t) (((int) sizeof(char[1 - 2 * !(!__builtin_types_compatible_p(__typeof__(tsi_keys_code_cfg_0), __typeof__(&(tsi_keys_code_cfg_0)[0])))]) - 1) + (sizeof(tsi_keys_code_cfg_0) / sizeof((tsi_keys_code_cfg_0)[0])))), .scans_per_electrode = 1, .ref_charge = 2, .ext_charge = 2, }; static void tsi_irq_config_fun_0 (const struct device* dev) { { _Static_assert((0 || !(0 & (1UL << (0)))), "" "ZLI interrupt registered but feature is disabled"); _Static_assert((((0 & (1UL << (0))) && ((1 == 1) || (2 < 1))) || (2 <= ((1UL << (4)) - ((1 + 0)) - 1))), "" "Invalid interrupt priority. Values must not exceed IRQ_PRIO_LOWEST"); static __attribute__((__aligned__(__alignof(struct _isr_list)))) struct _isr_list __attribute__((section(".intList"))) __attribute__((__used__)) __isr_tsi_isr_irq_13 = {83, 0, (void *)&tsi_isr, (const void *)(&__device_dts_ord_79)}; z_arm_irq_priority_set(83, 2, 0); }; arch_irq_enable(83); } static __attribute__((__aligned__(__alignof(struct device_state)))) struct device_state __devstate_dts_ord_79 __attribute__((__section__(".z_devstate"))); _Static_assert((sizeof("\"tsi0@40045000\"") <= 48U), "" "\"tsi0@40045000\"" " too long"); static const struct device_dt_nodelabels __dev_dt_nodelabels_dts_ord_79 = { .num_nodelabels = 1, .nodelabels = { "tsi", }, }; static const struct device_dt_metadata __dev_dt_meta_dts_ord_79 = { .nl = &__dev_dt_nodelabels_dts_ord_79, };; const __attribute__((__aligned__(__alignof(struct device)))) struct device __device_dts_ord_79 __attribute__((section("." "_device" "." "static" "." "3_90_"))) __attribute__((__used__)) = { .name = "tsi0@40045000", .config = (&tsi_config_0), .api = (((void *)0)), .state = (&__devstate_dts_ord_79), .data = (((void *)0)), .dt_meta = &__dev_dt_meta_dts_ord_79, }; static const __attribute__((__aligned__(__alignof(struct init_entry)))) struct init_entry __attribute__((__used__)) __attribute__((__section__( ".z_init_" "POST_KERNEL" "90""_" "00079""_"))) __init___device_dts_ord_79 = { .init_fn = {.dev = (tsi_keys_init)}, { .dev = &__device_dts_ord_79 }, }; ;
 #endif
