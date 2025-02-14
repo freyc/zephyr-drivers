@@ -1,8 +1,8 @@
 
-#define DT_DRV_COMPAT solomon_ssd1311
+
+#include "auxdisplay_ssd1311.h"
 
 #include <zephyr/drivers/auxdisplay.h>
-#include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
@@ -11,7 +11,8 @@
 LOG_MODULE_REGISTER(ssd1311, CONFIG_AUXDISPLAY_LOG_LEVEL);
 
 struct ssd1311_config {
-	struct i2c_dt_spec bus;
+	union ssd1311_bus_cfg bus;
+	const struct ssd1311_ops *ops;
 	struct gpio_dt_spec reset;
 	struct auxdisplay_capabilities capabilities;
 	int font_width;
@@ -25,19 +26,23 @@ struct ssd1311_data {
 	uint8_t contrast;
 };
 
-static int ssd1311_send_cmd(const struct device *dev, uint8_t cmd)
+static inline int ssd1311_send_cmd(const struct device *dev, uint8_t cmd)
 {
 	const struct ssd1311_config *config = dev->config;
-	uint8_t cmd_buf[2] = {0x80, cmd};
-	return i2c_write_dt(&config->bus, cmd_buf, sizeof(cmd_buf));
+	return config->ops->write_cmd(&config->bus, cmd);
 }
 
-static int ssd1311_send_data(const struct device *dev, uint8_t data)
+static inline int ssd1311_send_data(const struct device *dev, uint8_t data)
 {
 	const struct ssd1311_config *config = dev->config;
-	uint8_t cmd_buf[2] = {0x40, data};
-	return i2c_write_dt(&config->bus, cmd_buf, sizeof(cmd_buf));
+	return config->ops->write_data(&config->bus, data);
 }
+
+static inline int ssd1311_write_batch(const struct device *dev, const uint8_t *data, uint16_t len) {
+	const struct ssd1311_config *config = dev->config;
+	return config->ops->write_batch_data(&config->bus, data, len);
+}
+
 
 static int ssd1311_display_ctrl(const struct device *dev)
 {
@@ -98,9 +103,6 @@ static int ssd1311_cursor_shift_set(const struct device *dev, uint8_t direction,
 static int ssd1311_cursor_position_set(const struct device *dev, enum auxdisplay_position type,
 				       int16_t x, int16_t y)
 {
-
-	const struct ssd1311_config *config = dev->config;
-
 	if (type != AUXDISPLAY_POSITION_ABSOLUTE) {
 		return -ENOTSUP;
 	}
@@ -109,11 +111,14 @@ static int ssd1311_cursor_position_set(const struct device *dev, enum auxdisplay
 		return -EINVAL;
 	}
 
+#if 0
 	uint8_t pos_cmd[] = {0x80, 0x80};
 
 	pos_cmd[1] += (y * 0x20 + x);
 	int rc = i2c_write_dt(&config->bus, pos_cmd, sizeof(pos_cmd));
-
+#else
+	int rc = ssd1311_send_cmd(dev, 0x80 + (y * 0x20 + x));
+#endif
 	return rc;
 }
 
@@ -177,6 +182,7 @@ static int ssd1311_custom_character_set(const struct device *dev,
 
 static int ssd1311_write(const struct device *dev, const uint8_t *data, uint16_t len)
 {
+#if 0
 	struct i2c_msg msgs[2];
 
 	uint8_t msg[] = {0x40};
@@ -190,12 +196,16 @@ static int ssd1311_write(const struct device *dev, const uint8_t *data, uint16_t
 
 	const struct ssd1311_config *config = dev->config;
 	return i2c_transfer_dt(&config->bus, msgs, 2);
+#else
+	return ssd1311_write_batch(dev, data, len);
+#endif
 }
 
 static int ssd1311_custom_command(const struct device *dev, struct auxdisplay_custom_data *command)
 {
-	const struct ssd1311_config *config = dev->config;
-	return i2c_write_dt(&config->bus, command->data, command->len);
+	//const struct ssd1311_config *config = dev->config;
+	//return i2c_write_dt(&config->bus, command->data, command->len);
+	return -ENOTSUP;
 }
 
 static int ssd1311_init(const struct device *dev)
@@ -209,13 +219,13 @@ static int ssd1311_init(const struct device *dev)
 		return -EINVAL;
 	}
 
-	if (!device_is_ready(config->bus.bus)) {
-		LOG_ERR("i2c-bus not ready");
+	if (!config->ops->check_bus(&config->bus)) {
+		LOG_ERR("bus not ready");
 		return -ENODEV;
 	}
 
 	if (config->reset.port) {
-		rc = gpio_pin_configure_dt(&config->reset, GPIO_OUTPUT | GPIO_OUTPUT_INIT_LOW);
+		rc = gpio_pin_configure_dt(&config->reset, GPIO_OUTPUT_ACTIVE);
 
 		if (rc < 0) {
 			LOG_ERR("could not initialise reset-gpio");
@@ -224,7 +234,9 @@ static int ssd1311_init(const struct device *dev)
 
 		k_msleep(1);
 
-		rc = gpio_pin_set_dt(&config->reset, 1);
+		rc = gpio_pin_set_dt(&config->reset, 0);
+
+		k_msleep(1);
 	}
 
 #if 0
@@ -280,10 +292,15 @@ static int ssd1311_init(const struct device *dev)
     ssd1311_send_cmd(dev, /*0x04 |*/ 0x20 | ((config->lines == 2 || config->lines == 4) ? 0x08 : 0x00));
 #endif
 
-	ssd1311_clear(dev);
+	rc = ssd1311_clear(dev);
+	rc = ssd1311_clear(dev);
+	if(rc < 0) {
+		LOG_ERR("could not clear display");
+		return -ENODEV;
+	}
 
-	ssd1311_brightness_set(dev, data->contrast);
-	return 0;
+	return ssd1311_brightness_set(dev, data->contrast);
+	//return 0;
 }
 
 static DEVICE_API(auxdisplay, ssd1311_api) = {
@@ -307,25 +324,35 @@ static DEVICE_API(auxdisplay, ssd1311_api) = {
 	.write = ssd1311_write,
 	.custom_command = ssd1311_custom_command};
 
+#define SSD1311_I2C_CONFIG(inst)                                                                   \
+	.bus = {.i2c = I2C_DT_SPEC_INST_GET(inst)}, \
+	.ops = &ssd1311_i2c_ops,
+
+#define SSD1311_SPI_CONFIG(inst)                                                                   \
+	.bus = {.spi = SPI_DT_SPEC_INST_GET(inst, (SPI_WORD_SET(8) | SPI_TRANSFER_LSB | SPI_MODE_CPOL | SPI_MODE_CPHA), 0) }, \
+	.ops = &ssd1311_spi_ops,
+
 #define SSD1311_INIT(inst)                                                                         \
 	static const struct ssd1311_config ssd1311_config_##inst = {                               \
-		.bus = I2C_DT_SPEC_INST_GET(inst),                                                 \
-		.reset = GPIO_DT_SPEC_INST_GET_OR(inst, reset_gpios, {0}),                         \
-		.capabilities =                                                                    \
-			{                                                                          \
-				.columns = DT_INST_PROP(inst, columns),                            \
-				.rows = DT_INST_PROP(inst, rows),                                  \
-				.mode = 0,                                                         \
-				.brightness.minimum = 0,                                           \
-				.brightness.maximum = 255,                                         \
-				.backlight.minimum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,               \
-				.backlight.maximum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,               \
-				.custom_characters = 8,                                            \
-				.custom_character_width = 5u,                                      \
-				.custom_character_height = 8u,                                     \
-			},                                                                         \
-		.font_width = DT_INST_PROP(inst, font_width),                                      \
-		.invert_cursor = DT_INST_PROP(inst, invert_cursor),                                \
+		COND_CODE_1(DT_INST_ON_BUS(inst, spi), 						   \
+		(SSD1311_SPI_CONFIG(inst)),							   \
+		(SSD1311_I2C_CONFIG(inst))) \
+		.reset = GPIO_DT_SPEC_INST_GET_OR(inst, reset_gpios, {0}),                \
+		.capabilities =                                                           \
+			{                                                                 \
+				.columns = DT_INST_PROP(inst, columns),                   \
+				.rows = DT_INST_PROP(inst, rows),                         \
+				.mode = 0,                                                \
+				.brightness.minimum = 0,                                  \
+				.brightness.maximum = 255,                                \
+				.backlight.minimum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,      \
+				.backlight.maximum = AUXDISPLAY_LIGHT_NOT_SUPPORTED,      \
+				.custom_characters = 8,                                   \
+				.custom_character_width = 5u,                             \
+				.custom_character_height = 8u,                            \
+			},                                                                \
+		.font_width = DT_INST_PROP(inst, font_width),                             \
+		.invert_cursor = DT_INST_PROP(inst, invert_cursor),                       \
 	};                                                                                         \
 	static struct ssd1311_data ssd1311_data_##inst = {                                         \
 		.display_on = 0u,                                                                  \

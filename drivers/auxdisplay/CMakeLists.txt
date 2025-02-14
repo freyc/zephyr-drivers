@@ -1,2 +1,2 @@
 zephyr_library_amend()
-zephyr_library_sources_ifdef(CONFIG_AUXDISPLAY_SSD1311 auxdisplay_ssd1311.c)
+zephyr_library_sources_ifdef(CONFIG_AUXDISPLAY_SSD1311 auxdisplay_ssd1311.c auxdisplay_ssd1311_i2c.c auxdisplay_ssd1311_spi.c)
